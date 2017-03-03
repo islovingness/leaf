@@ -32,18 +32,18 @@ type RetInfo struct {
 	// nil
 	// interface{}
 	// []interface{}
-	ret interface{}
-	err error
+	Ret interface{}
+	Err error
 	// callback:
-	// func(err error)
-	// func(ret interface{}, err error)
-	// func(ret []interface{}, err error)
-	cb interface{}
+	// func(Err error)
+	// func(Ret interface{}, Err error)
+	// func(Ret []interface{}, Err error)
+	Cb interface{}
 }
 
 type Client struct {
 	s               *Server
-	chanSyncRet     chan *RetInfo
+	ChanSyncRet     chan *RetInfo
 	ChanAsynRet     chan *RetInfo
 	pendingAsynCall int
 }
@@ -55,7 +55,7 @@ func NewServer(l int) *Server {
 	return s
 }
 
-func assert(i interface{}) []interface{} {
+func Assert(i interface{}) []interface{} {
 	if i == nil {
 		return nil
 	} else {
@@ -92,7 +92,7 @@ func (s *Server) ret(ci *CallInfo, ri *RetInfo) (err error) {
 		}
 	}()
 
-	ri.cb = ci.cb
+	ri.Cb = ci.cb
 	ci.chanRet <- ri
 	return
 }
@@ -108,26 +108,24 @@ func (s *Server) exec(ci *CallInfo) (err error) {
 				err = fmt.Errorf("%v", r)
 			}
 
-			s.ret(ci, &RetInfo{err: fmt.Errorf("%v", r)})
+			s.ret(ci, &RetInfo{Err: fmt.Errorf("%v", r)})
 		}
 	}()
 
 	// execute
 	switch ci.f.(type) {
 	case func([]interface{}):
-		if ci.chanRet == nil {
-			ci.f.(func([]interface{}))(ci.args)
-			return nil
-		}
+		ci.f.(func([]interface{}))(ci.args)
+		return s.ret(ci, &RetInfo{})
 	case func([]interface{}) error:
 		err := ci.f.(func([]interface{}) error)(ci.args)
-		return s.ret(ci, &RetInfo{err:err})
+		return s.ret(ci, &RetInfo{Err: err})
 	case func([]interface{}) (interface{}, error):
 		ret, err := ci.f.(func([]interface{}) (interface{}, error))(ci.args)
-		return s.ret(ci, &RetInfo{ret:ret, err:err})
+		return s.ret(ci, &RetInfo{Ret: ret, Err: err})
 	case func([]interface{}) ([]interface{}, error):
 		ret, err := ci.f.(func([]interface{}) ([]interface{}, error))(ci.args)
-		return s.ret(ci, &RetInfo{ret:ret, err:err})
+		return s.ret(ci, &RetInfo{Ret: ret, Err: err})
 	}
 
 	panic("bug")
@@ -177,7 +175,7 @@ func (s *Server) Close() {
 
 	for ci := range s.ChanCall {
 		s.ret(ci, &RetInfo{
-			err: errors.New("chanrpc server closed"),
+			Err: errors.New("chanrpc server closed"),
 		})
 	}
 }
@@ -191,7 +189,7 @@ func (s *Server) Open(l int) *Client {
 
 func NewClient(l int) *Client {
 	c := new(Client)
-	c.chanSyncRet = make(chan *RetInfo, 1)
+	c.ChanSyncRet = make(chan *RetInfo, 1)
 	c.ChanAsynRet = make(chan *RetInfo, l)
 	return c
 }
@@ -258,14 +256,14 @@ func (c *Client) Call0(id interface{}, args ...interface{}) error {
 	err = c.call(&CallInfo{
 		f:       f,
 		args:    args,
-		chanRet: c.chanSyncRet,
+		chanRet: c.ChanSyncRet,
 	}, true)
 	if err != nil {
 		return err
 	}
 
-	ri := <-c.chanSyncRet
-	return ri.err
+	ri := <-c.ChanSyncRet
+	return ri.Err
 }
 
 func (c *Client) Call1(id interface{}, args ...interface{}) (interface{}, error) {
@@ -277,14 +275,14 @@ func (c *Client) Call1(id interface{}, args ...interface{}) (interface{}, error)
 	err = c.call(&CallInfo{
 		f:       f,
 		args:    args,
-		chanRet: c.chanSyncRet,
+		chanRet: c.ChanSyncRet,
 	}, true)
 	if err != nil {
 		return nil, err
 	}
 
-	ri := <-c.chanSyncRet
-	return ri.ret, ri.err
+	ri := <-c.ChanSyncRet
+	return ri.Ret, ri.Err
 }
 
 func (c *Client) CallN(id interface{}, args ...interface{}) ([]interface{}, error) {
@@ -296,20 +294,20 @@ func (c *Client) CallN(id interface{}, args ...interface{}) ([]interface{}, erro
 	err = c.call(&CallInfo{
 		f:       f,
 		args:    args,
-		chanRet: c.chanSyncRet,
+		chanRet: c.ChanSyncRet,
 	}, true)
 	if err != nil {
 		return nil, err
 	}
 
-	ri := <-c.chanSyncRet
-	return assert(ri.ret), ri.err
+	ri := <-c.ChanSyncRet
+	return Assert(ri.Ret), ri.Err
 }
 
 func (c *Client) asynCall(id interface{}, args []interface{}, cb interface{}, n int) {
 	f, err := c.f(id, n)
 	if err != nil {
-		c.ChanAsynRet <- &RetInfo{err: err, cb: cb}
+		c.ChanAsynRet <- &RetInfo{Err: err, Cb: cb}
 		return
 	}
 
@@ -320,7 +318,7 @@ func (c *Client) asynCall(id interface{}, args []interface{}, cb interface{}, n 
 		cb:      cb,
 	}, false)
 	if err != nil {
-		c.ChanAsynRet <- &RetInfo{err: err, cb: cb}
+		c.ChanAsynRet <- &RetInfo{Err: err, Cb: cb}
 		return
 	}
 }
@@ -347,7 +345,7 @@ func (c *Client) AsynCall(id interface{}, _args ...interface{}) {
 
 	// too many calls
 	if c.pendingAsynCall >= cap(c.ChanAsynRet) {
-		execCb(&RetInfo{err: errors.New("too many calls"), cb: cb})
+		execCb(&RetInfo{Err: errors.New("too many calls"), Cb: cb})
 		return
 	}
 
@@ -369,13 +367,13 @@ func execCb(ri *RetInfo) {
 	}()
 
 	// execute
-	switch ri.cb.(type) {
+	switch ri.Cb.(type) {
 	case func(error):
-		ri.cb.(func(error))(ri.err)
+		ri.Cb.(func(error))(ri.Err)
 	case func(interface{}, error):
-		ri.cb.(func(interface{}, error))(ri.ret, ri.err)
+		ri.Cb.(func(interface{}, error))(ri.Ret, ri.Err)
 	case func([]interface{}, error):
-		ri.cb.(func([]interface{}, error))(assert(ri.ret), ri.err)
+		ri.Cb.(func([]interface{}, error))(Assert(ri.Ret), ri.Err)
 	default:
 		panic("bug")
 	}

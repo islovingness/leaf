@@ -1,19 +1,21 @@
 package cluster
 
 import (
-	"github.com/name5566/leaf/log"
-	"github.com/name5566/leaf/conf"
-	"github.com/name5566/leaf/network"
 	"math"
 	"time"
 	"reflect"
 	"net"
+	"fmt"
+	"github.com/name5566/leaf/log"
+	"github.com/name5566/leaf/conf"
+	"github.com/name5566/leaf/network"
+	"github.com/name5566/leaf/chanrpc"
 )
 
 var (
 	server  *network.TCPServer
 	clients []*network.TCPClient
-	agents = map[string]*Agent{}
+	agents  = map[string]*Agent{}
 )
 
 func Init() {
@@ -63,16 +65,16 @@ func Destroy() {
 }
 
 type Agent struct {
-	ServerName	string
-	conn       	*network.TCPConn
-	userData 	interface{}
+	ServerName string
+	conn       *network.TCPConn
+	userData   interface{}
 }
 
 func newAgent(conn *network.TCPConn) network.Agent {
 	a := new(Agent)
 	a.conn = conn
 
-	msg := &S2S_NotifyServerName{ServerName:conf.ServerName}
+	msg := &S2S_NotifyServerName{ServerName: conf.ServerName}
 	a.WriteMsg(msg)
 	return a
 }
@@ -138,4 +140,72 @@ func (a *Agent) UserData() interface{} {
 
 func (a *Agent) SetUserData(data interface{}) {
 	a.userData = data
+}
+
+func (a *Agent) Go(id interface{}, args ...interface{}) {
+	msg := &S2S_RequestMsg{MsgID: id, CallType: callGo, Args: args}
+	a.WriteMsg(msg)
+}
+
+func (a *Agent) Call0(id interface{}, args ...interface{}) error {
+	chanSyncRet := make(chan *chanrpc.RetInfo, 1)
+
+	request := &RequestInfo{chanRet: chanSyncRet}
+	requestID := registerRequest(request)
+	msg := &S2S_RequestMsg{RequestID: requestID, MsgID: id, CallType: call0, Args: args}
+	a.WriteMsg(msg)
+
+	ri := <-chanSyncRet
+	return ri.Err
+}
+
+func (a *Agent) Call1(id interface{}, args ...interface{}) (interface{}, error) {
+	chanSyncRet := make(chan *chanrpc.RetInfo, 1)
+
+	request := &RequestInfo{chanRet: chanSyncRet}
+	requestID := registerRequest(request)
+	msg := &S2S_RequestMsg{RequestID: requestID, MsgID: id, CallType: call1, Args: args}
+	a.WriteMsg(msg)
+
+	ri := <-chanSyncRet
+	return ri.Ret, ri.Err
+}
+
+func (a *Agent) CallN(id interface{}, args ...interface{}) ([]interface{}, error) {
+	chanSyncRet := make(chan *chanrpc.RetInfo, 1)
+
+	request := &RequestInfo{chanRet: chanSyncRet}
+	requestID := registerRequest(request)
+	msg := &S2S_RequestMsg{RequestID: requestID, MsgID: id, CallType: callN, Args: args}
+	a.WriteMsg(msg)
+
+	ri := <-chanSyncRet
+	return chanrpc.Assert(ri.Ret), ri.Err
+}
+
+func (a *Agent) AsynCall(chanAsynRet chan *chanrpc.RetInfo, id interface{}, args ...interface{}) {
+	if len(args) < 1 {
+		panic(fmt.Sprintf("%v asyn call of callback function not found", id))
+	}
+
+	lastIndex := len(args) - 1
+	cb := args[lastIndex]
+	args = args[:lastIndex]
+
+	var callType uint8
+	switch cb.(type) {
+	case func(error):
+		callType = call0
+	case func(interface{}, error):
+		callType = call1
+	case func([]interface{}, error):
+		callType = callN
+	default:
+		panic(fmt.Sprintf("%v asyn call definition of callback function is invalid", id))
+	}
+
+	request := &RequestInfo{cb: cb, chanRet: chanAsynRet}
+	requestID := registerRequest(request)
+	msg := &S2S_RequestMsg{RequestID: requestID, MsgID: id, CallType: callType, Args: args}
+	a.WriteMsg(msg)
 }
