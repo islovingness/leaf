@@ -127,7 +127,7 @@ type Agent struct {
 	heartHeatWaitTimes	int32
 
 	requestID		uint32
-	requestCount	int32
+	requestMutex	sync.Mutex
 	requestMap 		map[uint32]*RequestInfo
 }
 
@@ -141,23 +141,29 @@ func newAgent(conn *network.TCPConn) network.Agent {
 	return a
 }
 
-func (a *Agent) getRequestCount() int32 {
-	return atomic.LoadInt32(&a.requestCount)
+func (a *Agent) GetRequestCount() int {
+	a.requestMutex.Lock()
+	defer a.requestMutex.Unlock()
+	return len(a.requestMap)
 }
 
 func (a *Agent) registerRequest(request *RequestInfo) uint32 {
+	a.requestMutex.Lock()
+	defer a.requestMutex.Unlock()
+
 	reqID := a.requestID
 	a.requestMap[reqID] = request
-	atomic.AddInt32(&a.requestCount, 1)
 	a.requestID += 1
 	return reqID
 }
 
 func (a *Agent) popRequest(requestID uint32) *RequestInfo {
+	a.requestMutex.Lock()
+	defer a.requestMutex.Unlock()
+
 	request, ok := a.requestMap[requestID]
 	if ok {
 		delete(a.requestMap, requestID)
-		atomic.AddInt32(&a.requestCount, -1)
 		return request
 	} else {
 		return nil

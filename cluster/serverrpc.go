@@ -14,13 +14,13 @@ type RequestInfo struct{
 	chanRet chan *chanrpc.RetInfo
 }
 
-func GetRequestCount() int32 {
+func GetRequestCount() int {
 	agentsMutex.Lock()
 	defer agentsMutex.Unlock()
 
-	var count int32 = 0
+	var count int = 0
 	for _, agent := range agents {
-		count += agent.getRequestCount()
+		count += agent.GetRequestCount()
 	}
 	return count
 }
