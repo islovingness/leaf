@@ -6,20 +6,25 @@ import (
 	"fmt"
 	"github.com/name5566/leaf/chanrpc"
 	"github.com/name5566/leaf/log"
+	"sync/atomic"
 )
 
 var (
 	Processor = json.NewProcessor()
 )
 
-type S2S_NotifyServerName struct {
-	ServerName	string
-}
-
 const (
 	callNotForResult  = iota
 	callForResult
 )
+
+type S2S_NotifyServerName struct {
+	ServerName	string
+}
+
+type S2S_HeartBeat struct {
+
+}
 
 type S2S_RequestMsg struct {
 	RequestID uint32
@@ -38,7 +43,16 @@ func handleNotifyServerName(args []interface{}) {
 	msg := args[0].(*S2S_NotifyServerName)
 	agent := args[1].(*Agent)
 	agent.ServerName = msg.ServerName
+
+	agentsMutex.Lock()
 	agents[agent.ServerName] = agent
+	agentsMutex.Unlock()
+	log.Release("%v server is online", msg.ServerName)
+}
+
+func handleHeartBeat(args []interface{}) {
+	agent := args[1].(*Agent)
+	atomic.StoreInt32(&agent.heartHeatWaitTimes, 0)
 }
 
 func handleRequestMsg(args []interface{}) {
@@ -72,7 +86,9 @@ func handleRequestMsg(args []interface{}) {
 
 func handleResponseMsg(args []interface{}) {
 	msg := args[0].(*S2S_ResponseMsg)
-	request := popRequest(msg.RequestID)
+	agent := args[1].(*Agent)
+
+	request := agent.popRequest(msg.RequestID)
 	if request == nil {
 		log.Error("request id %v is not exist", msg.RequestID)
 		return
@@ -84,6 +100,7 @@ func handleResponseMsg(args []interface{}) {
 
 func init() {
 	Processor.SetHandler(&S2S_NotifyServerName{}, handleNotifyServerName)
+	Processor.SetHandler(&S2S_HeartBeat{}, handleHeartBeat)
 	Processor.SetHandler(&S2S_RequestMsg{}, handleRequestMsg)
 	Processor.SetHandler(&S2S_ResponseMsg{}, handleResponseMsg)
 }

@@ -3,14 +3,10 @@ package cluster
 import (
 	"fmt"
 	"github.com/name5566/leaf/chanrpc"
-	"sync"
 )
 
 var (
-	requestID 		uint32
-	requestMutex	sync.Mutex
-	requestMap 		= map[uint32]*RequestInfo{}
-	routeMap		= map[interface{}]*chanrpc.Client{}
+	routeMap = map[interface{}]*chanrpc.Client{}
 )
 
 type RequestInfo struct{
@@ -18,33 +14,15 @@ type RequestInfo struct{
 	chanRet chan *chanrpc.RetInfo
 }
 
-func registerRequest(request *RequestInfo) uint32 {
-	requestMutex.Lock()
-	defer requestMutex.Unlock()
+func GetRequestCount() int32 {
+	agentsMutex.Lock()
+	defer agentsMutex.Unlock()
 
-	reqID := requestID
-	requestMap[reqID] = request
-	requestID += 1
-	return reqID
-}
-
-func popRequest(requestID uint32) *RequestInfo {
-	requestMutex.Lock()
-	defer requestMutex.Unlock()
-
-	request, ok := requestMap[requestID]
-	if ok {
-		delete(requestMap, requestID)
-		return request
-	} else {
-		return nil
+	var count int32 = 0
+	for _, agent := range agents {
+		count += agent.getRequestCount()
 	}
-}
-
-func GetRequestCount() int {
-	requestMutex.Lock()
-	defer requestMutex.Unlock()
-	return len(requestMap)
+	return count
 }
 
 func SetRoute(id interface{}, server *chanrpc.Server) {

@@ -10,12 +10,16 @@ import (
 	"github.com/name5566/leaf/conf"
 	"github.com/name5566/leaf/network"
 	"github.com/name5566/leaf/chanrpc"
+	"sync"
+	"sync/atomic"
 )
 
 var (
-	server  *network.TCPServer
-	clients []*network.TCPClient
-	agents  = map[string]*Agent{}
+	closeSig 			chan bool
+	server  			*network.TCPServer
+	clients 			[]*network.TCPClient
+	agentsMutex			sync.Mutex
+	agents  			= map[string]*Agent{}
 )
 
 func Init() {
@@ -39,13 +43,48 @@ func Init() {
 		client.LenMsgLen = 4
 		client.MaxMsgLen = math.MaxUint32
 		client.NewAgent = newAgent
+		client.AutoReconnect = true
 
 		client.Start()
 		clients = append(clients, client)
 	}
+
+	if conf.HeartBeatInterval <= 0 {
+		conf.HeartBeatInterval = 5
+		log.Release("invalid HeartBeatInterval, reset to %v", conf.HeartBeatInterval)
+	}
+
+	go run()
+}
+
+func run()  {
+	msg := &S2S_HeartBeat{}
+	timer := time.NewTicker(time.Duration(conf.HeartBeatInterval) * time.Second)
+
+	for {
+		select {
+		case <-closeSig:
+			return 
+		case <-timer.C:
+			timer = time.NewTicker(time.Duration(conf.HeartBeatInterval) * time.Second)
+
+			agentsMutex.Lock()
+			for _, agent := range agents {
+				if atomic.AddInt32(&agent.heartHeatWaitTimes, 1) >= 2 {
+					agent.conn.Destroy()
+				} else {
+					agent.WriteMsg(msg)
+				}
+			}
+			agentsMutex.Unlock()
+		}
+	}
 }
 
 func GetAgent(serverName string) *Agent {
+	agentsMutex.Lock()
+	defer agentsMutex.Unlock()
+
 	agent, ok := agents[serverName]
 	if ok {
 		return agent
@@ -82,18 +121,47 @@ func Destroy() {
 }
 
 type Agent struct {
-	ServerName string
-	conn       *network.TCPConn
-	userData   interface{}
+	ServerName 			string
+	conn       			*network.TCPConn
+	userData   			interface{}
+	heartHeatWaitTimes	int32
+
+	requestID		uint32
+	requestCount	int32
+	requestMap 		map[uint32]*RequestInfo
 }
 
 func newAgent(conn *network.TCPConn) network.Agent {
 	a := new(Agent)
 	a.conn = conn
+	a.requestMap = make(map[uint32]*RequestInfo)
 
 	msg := &S2S_NotifyServerName{ServerName: conf.ServerName}
 	a.WriteMsg(msg)
 	return a
+}
+
+func (a *Agent) getRequestCount() int32 {
+	return atomic.LoadInt32(&a.requestCount)
+}
+
+func (a *Agent) registerRequest(request *RequestInfo) uint32 {
+	reqID := a.requestID
+	a.requestMap[reqID] = request
+	atomic.AddInt32(&a.requestCount, 1)
+	a.requestID += 1
+	return reqID
+}
+
+func (a *Agent) popRequest(requestID uint32) *RequestInfo {
+	request, ok := a.requestMap[requestID]
+	if ok {
+		delete(a.requestMap, requestID)
+		atomic.AddInt32(&a.requestCount, -1)
+		return request
+	} else {
+		return nil
+	}
 }
 
 func (a *Agent) Run() {
@@ -119,7 +187,16 @@ func (a *Agent) Run() {
 	}
 }
 
-func (a *Agent) OnClose() {}
+func (a *Agent) OnClose() {
+	agentsMutex.Lock()
+	defer agentsMutex.Unlock()
+
+	_, ok := agents[a.ServerName]
+	if ok {
+		delete(agents, a.ServerName)
+	}
+	log.Release("%v server is offline", a.ServerName)
+}
 
 func (a *Agent) WriteMsg(msg interface{}) {
 	if Processor != nil {
@@ -168,7 +245,7 @@ func (a *Agent) Call0(id interface{}, args ...interface{}) error {
 	chanSyncRet := make(chan *chanrpc.RetInfo, 1)
 
 	request := &RequestInfo{chanRet: chanSyncRet}
-	requestID := registerRequest(request)
+	requestID := a.registerRequest(request)
 	msg := &S2S_RequestMsg{RequestID: requestID, MsgID: id, CallType: callForResult, Args: args}
 	a.WriteMsg(msg)
 
@@ -180,7 +257,7 @@ func (a *Agent) Call1(id interface{}, args ...interface{}) (interface{}, error) 
 	chanSyncRet := make(chan *chanrpc.RetInfo, 1)
 
 	request := &RequestInfo{chanRet: chanSyncRet}
-	requestID := registerRequest(request)
+	requestID := a.registerRequest(request)
 	msg := &S2S_RequestMsg{RequestID: requestID, MsgID: id, CallType: callForResult, Args: args}
 	a.WriteMsg(msg)
 
@@ -192,7 +269,7 @@ func (a *Agent) CallN(id interface{}, args ...interface{}) ([]interface{}, error
 	chanSyncRet := make(chan *chanrpc.RetInfo, 1)
 
 	request := &RequestInfo{chanRet: chanSyncRet}
-	requestID := registerRequest(request)
+	requestID := a.registerRequest(request)
 	msg := &S2S_RequestMsg{RequestID: requestID, MsgID: id, CallType: callForResult, Args: args}
 	a.WriteMsg(msg)
 
@@ -222,7 +299,7 @@ func (a *Agent) AsynCall(chanAsynRet chan *chanrpc.RetInfo, id interface{}, args
 	}
 
 	request := &RequestInfo{cb: cb, chanRet: chanAsynRet}
-	requestID := registerRequest(request)
+	requestID := a.registerRequest(request)
 	msg := &S2S_RequestMsg{RequestID: requestID, MsgID: id, CallType: callType, Args: args}
 	a.WriteMsg(msg)
 }
