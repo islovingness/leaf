@@ -83,6 +83,9 @@ func (s *Server) Register(id interface{}, f interface{}) {
 
 func (s *Server) ret(ci *CallInfo, ri *RetInfo) (err error) {
 	if ci.chanRet == nil {
+		if ci.cb != nil {
+			ci.cb.(func(*RetInfo))(ri)
+		}
 		return
 	}
 
@@ -198,6 +201,10 @@ func (c *Client) Attach(s *Server) {
 	c.s = s
 }
 
+func (c *Client) GetServer() *Server {
+	return c.s
+}
+
 func (c *Client) call(ci *CallInfo, block bool) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -302,6 +309,37 @@ func (c *Client) CallN(id interface{}, args ...interface{}) ([]interface{}, erro
 
 	ri := <-c.ChanSyncRet
 	return Assert(ri.Ret), ri.Err
+}
+
+func (c *Client) RpcCall(id interface{}, args ...interface{}) {
+	if len(args) < 1 {
+		panic("callback function not found")
+	}
+
+	lastIndex := len(args) - 1
+	cb := args[lastIndex]
+	args = args[:lastIndex]
+
+	var err error
+	f := c.s.functions[id]
+	if f == nil {
+		err = fmt.Errorf("function id %v: function not registered", id)
+		return
+	}
+
+	var cbFunc func(*RetInfo)
+	if cb != nil {
+		cbFunc = cb.(func(*RetInfo))
+	}
+
+	err = c.call(&CallInfo{
+		f:       f,
+		args:    args,
+		cb:      cb,
+	}, false)
+	if err != nil && cbFunc != nil {
+		cbFunc(&RetInfo{Ret:nil, Err:err})
+	}
 }
 
 func (c *Client) asynCall(id interface{}, args []interface{}, cb interface{}, n int) {

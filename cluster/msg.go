@@ -17,10 +17,8 @@ type S2S_NotifyServerName struct {
 }
 
 const (
-	callGo = iota
-	call0
-	call1
-	callN
+	callNotForResult  = iota
+	callForResult
 )
 
 type S2S_RequestMsg struct {
@@ -49,32 +47,26 @@ func handleRequestMsg(args []interface{}) {
 
 	msgID := recvMsg.MsgID
 	sendMsg := &S2S_ResponseMsg{RequestID: recvMsg.RequestID}
-	server, ok := routeMap[msgID]
+	client, ok := routeMap[msgID]
 	if !ok {
 		sendMsg.Err = errors.New(fmt.Sprintf("%v msg is not set route", msgID))
 		agent.WriteMsg(sendMsg)
 		return
 	}
 
+	sendMsgFunc := func(ret *chanrpc.RetInfo) {
+		sendMsg.Ret, sendMsg.Err = ret.Ret, ret.Err
+		agent.WriteMsg(sendMsg)
+	}
+
 	args = recvMsg.Args
 	switch recvMsg.CallType {
-	case callGo:
-		server.Go(msgID, args...)
-	case call0:
-		go func() {
-			sendMsg.Err = server.Call0(msgID, args...)
-			agent.WriteMsg(sendMsg)
-		}()
-	case call1:
-		go func() {
-			sendMsg.Ret, sendMsg.Err = server.Call1(msgID, args...)
-			agent.WriteMsg(sendMsg)
-		}()
-	case callN:
-		go func() {
-			sendMsg.Ret, sendMsg.Err = server.CallN(msgID, args...)
-			agent.WriteMsg(sendMsg)
-		}()
+	case callNotForResult:
+		args = append(args, nil)
+		client.RpcCall(msgID, args...)
+	default:
+		args = append(args, sendMsgFunc)
+		client.RpcCall(msgID, args...)
 	}
 }
 
@@ -83,6 +75,7 @@ func handleResponseMsg(args []interface{}) {
 	request := popRequest(msg.RequestID)
 	if request == nil {
 		log.Error("request id %v is not exist", msg.RequestID)
+		return
 	}
 
 	ret := &chanrpc.RetInfo{Ret: msg.Ret, Err: msg.Err, Cb: request.cb}

@@ -55,6 +55,23 @@ func GetAgent(serverName string) *Agent {
 }
 
 func Destroy() {
+	var beginNoRequestTime int64 = 0
+	for {
+		time.Sleep(time.Second)
+
+		curTime := time.Now().Unix()
+		if GetRequestCount() == 0 {
+			if beginNoRequestTime == 0 {
+				beginNoRequestTime = curTime
+				continue
+			} else if curTime - beginNoRequestTime >= 5 {
+				break
+			}
+		} else {
+			beginNoRequestTime = 0
+		}
+	}
+
 	if server != nil {
 		server.Close()
 	}
@@ -143,7 +160,7 @@ func (a *Agent) SetUserData(data interface{}) {
 }
 
 func (a *Agent) Go(id interface{}, args ...interface{}) {
-	msg := &S2S_RequestMsg{MsgID: id, CallType: callGo, Args: args}
+	msg := &S2S_RequestMsg{MsgID: id, CallType: callNotForResult, Args: args}
 	a.WriteMsg(msg)
 }
 
@@ -152,7 +169,7 @@ func (a *Agent) Call0(id interface{}, args ...interface{}) error {
 
 	request := &RequestInfo{chanRet: chanSyncRet}
 	requestID := registerRequest(request)
-	msg := &S2S_RequestMsg{RequestID: requestID, MsgID: id, CallType: call0, Args: args}
+	msg := &S2S_RequestMsg{RequestID: requestID, MsgID: id, CallType: callForResult, Args: args}
 	a.WriteMsg(msg)
 
 	ri := <-chanSyncRet
@@ -164,7 +181,7 @@ func (a *Agent) Call1(id interface{}, args ...interface{}) (interface{}, error) 
 
 	request := &RequestInfo{chanRet: chanSyncRet}
 	requestID := registerRequest(request)
-	msg := &S2S_RequestMsg{RequestID: requestID, MsgID: id, CallType: call1, Args: args}
+	msg := &S2S_RequestMsg{RequestID: requestID, MsgID: id, CallType: callForResult, Args: args}
 	a.WriteMsg(msg)
 
 	ri := <-chanSyncRet
@@ -176,7 +193,7 @@ func (a *Agent) CallN(id interface{}, args ...interface{}) ([]interface{}, error
 
 	request := &RequestInfo{chanRet: chanSyncRet}
 	requestID := registerRequest(request)
-	msg := &S2S_RequestMsg{RequestID: requestID, MsgID: id, CallType: callN, Args: args}
+	msg := &S2S_RequestMsg{RequestID: requestID, MsgID: id, CallType: callForResult, Args: args}
 	a.WriteMsg(msg)
 
 	ri := <-chanSyncRet
@@ -195,11 +212,11 @@ func (a *Agent) AsynCall(chanAsynRet chan *chanrpc.RetInfo, id interface{}, args
 	var callType uint8
 	switch cb.(type) {
 	case func(error):
-		callType = call0
+		callType = callForResult
 	case func(interface{}, error):
-		callType = call1
+		callType = callForResult
 	case func([]interface{}, error):
-		callType = callN
+		callType = callForResult
 	default:
 		panic(fmt.Sprintf("%v asyn call definition of callback function is invalid", id))
 	}
