@@ -1,22 +1,27 @@
 package cluster
 
 import (
-	"github.com/name5566/leaf/network/json"
+	lgob "github.com/name5566/leaf/network/gob"
 	"errors"
 	"fmt"
 	"github.com/name5566/leaf/chanrpc"
 	"github.com/name5566/leaf/log"
 	"sync/atomic"
+	"encoding/gob"
 )
 
 var (
-	Processor = json.NewProcessor()
+	Processor = lgob.NewProcessor()
 )
 
 const (
 	callNotForResult  = iota
 	callForResult
 )
+
+func init() {
+	gob.Register([]interface{}{})
+}
 
 type S2S_NotifyServerName struct {
 	ServerName	string
@@ -36,18 +41,13 @@ type S2S_RequestMsg struct {
 type S2S_ResponseMsg struct {
 	RequestID uint32
 	Ret       interface{}
-	Err       error
+	Err       string
 }
 
 func handleNotifyServerName(args []interface{}) {
 	msg := args[0].(*S2S_NotifyServerName)
 	agent := args[1].(*Agent)
-	agent.ServerName = msg.ServerName
-
-	agentsMutex.Lock()
-	agents[agent.ServerName] = agent
-	agentsMutex.Unlock()
-	log.Release("%v server is online", msg.ServerName)
+	addAgent(msg.ServerName, agent)
 }
 
 func handleHeartBeat(args []interface{}) {
@@ -63,13 +63,16 @@ func handleRequestMsg(args []interface{}) {
 	sendMsg := &S2S_ResponseMsg{RequestID: recvMsg.RequestID}
 	client, ok := routeMap[msgID]
 	if !ok {
-		sendMsg.Err = errors.New(fmt.Sprintf("%v msg is not set route", msgID))
+		sendMsg.Err = fmt.Sprintf("%v msg is not set route", msgID)
 		agent.WriteMsg(sendMsg)
 		return
 	}
 
 	sendMsgFunc := func(ret *chanrpc.RetInfo) {
-		sendMsg.Ret, sendMsg.Err = ret.Ret, ret.Err
+		sendMsg.Ret = ret.Ret
+		if ret.Err != nil {
+			sendMsg.Err = ret.Err.Error()
+		}
 		agent.WriteMsg(sendMsg)
 	}
 
@@ -94,7 +97,10 @@ func handleResponseMsg(args []interface{}) {
 		return
 	}
 
-	ret := &chanrpc.RetInfo{Ret: msg.Ret, Err: msg.Err, Cb: request.cb}
+	ret := &chanrpc.RetInfo{Ret: msg.Ret, Cb: request.cb}
+	if msg.Err != "" {
+		ret.Err = errors.New(msg.Err)
+	}
 	request.chanRet <- ret
 }
 

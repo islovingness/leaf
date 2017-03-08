@@ -9,7 +9,7 @@ var (
 	routeMap = map[interface{}]*chanrpc.Client{}
 )
 
-type RequestInfo struct{
+type RequestInfo struct {
 	cb      interface{}
 	chanRet chan *chanrpc.RetInfo
 }
@@ -32,6 +32,18 @@ func SetRoute(id interface{}, server *chanrpc.Server) {
 	}
 
 	routeMap[id] = server.Open(0)
+}
+
+func GetAgent(serverName string) *Agent {
+	agentsMutex.Lock()
+	defer agentsMutex.Unlock()
+
+	agent, ok := agents[serverName]
+	if ok {
+		return agent
+	} else {
+		return nil
+	}
 }
 
 func Go(serverName string, id interface{}, args ...interface{}) {
@@ -74,8 +86,8 @@ func AsynCall(serverName string, chanAsynRet chan *chanrpc.RetInfo, id interface
 		agent.AsynCall(chanAsynRet, id, args...)
 	} else {
 		chanAsynRet <- &chanrpc.RetInfo{
-			Err:fmt.Errorf("%v server is offline", serverName),
-			Cb:args[len(args) - 1],
+			Err: fmt.Errorf("%v server is offline", serverName),
+			Cb:  args[len(args)-1],
 		}
 	}
 }

@@ -15,11 +15,12 @@ import (
 )
 
 var (
-	closeSig 			chan bool
-	server  			*network.TCPServer
-	clients 			[]*network.TCPClient
-	agentsMutex			sync.Mutex
-	agents  			= map[string]*Agent{}
+	closeSig     chan bool
+	server       *network.TCPServer
+	clients      []*network.TCPClient
+	agentsMutex  sync.Mutex
+	agents       = map[string]*Agent{}
+	AgentChanRPC *chanrpc.Server
 )
 
 func Init() {
@@ -57,14 +58,14 @@ func Init() {
 	go run()
 }
 
-func run()  {
+func run() {
 	msg := &S2S_HeartBeat{}
 	timer := time.NewTicker(time.Duration(conf.HeartBeatInterval) * time.Second)
 
 	for {
 		select {
 		case <-closeSig:
-			return 
+			return
 		case <-timer.C:
 			timer = time.NewTicker(time.Duration(conf.HeartBeatInterval) * time.Second)
 
@@ -81,16 +82,39 @@ func run()  {
 	}
 }
 
-func GetAgent(serverName string) *Agent {
+func _removeAgent(serverName string) {
+	agent, ok := agents[serverName]
+	if ok {
+		delete(agents, serverName)
+		agent.Destroy()
+		log.Release("%v server is offline", serverName)
+
+		if AgentChanRPC != nil {
+			AgentChanRPC.Go("CloseServerAgent", serverName, agent)
+		}
+	}
+}
+
+func addAgent(serverName string, agent *Agent) {
 	agentsMutex.Lock()
 	defer agentsMutex.Unlock()
 
-	agent, ok := agents[serverName]
-	if ok {
-		return agent
-	} else {
-		return nil
+	_removeAgent(serverName)
+
+	agent.ServerName = serverName
+	agents[agent.ServerName] = agent
+	log.Release("%v server is online", serverName)
+
+	if AgentChanRPC != nil {
+		AgentChanRPC.Go("NewServerAgent", serverName, agent)
 	}
+}
+
+func removeAgent(serverName string) {
+	agentsMutex.Lock()
+	defer agentsMutex.Unlock()
+
+	_removeAgent(serverName)
 }
 
 func Destroy() {
@@ -103,7 +127,7 @@ func Destroy() {
 			if beginNoRequestTime == 0 {
 				beginNoRequestTime = curTime
 				continue
-			} else if curTime - beginNoRequestTime >= 5 {
+			} else if curTime-beginNoRequestTime >= 5 {
 				break
 			}
 		} else {
@@ -121,14 +145,14 @@ func Destroy() {
 }
 
 type Agent struct {
-	ServerName 			string
-	conn       			*network.TCPConn
-	userData   			interface{}
-	heartHeatWaitTimes	int32
+	ServerName         string
+	conn               *network.TCPConn
+	userData           interface{}
+	heartHeatWaitTimes int32
 
-	requestID		uint32
-	requestMutex	sync.Mutex
-	requestMap 		map[uint32]*RequestInfo
+	requestID    uint32
+	requestMutex sync.Mutex
+	requestMap   map[uint32]*RequestInfo
 }
 
 func newAgent(conn *network.TCPConn) network.Agent {
@@ -194,14 +218,7 @@ func (a *Agent) Run() {
 }
 
 func (a *Agent) OnClose() {
-	agentsMutex.Lock()
-	defer agentsMutex.Unlock()
-
-	_, ok := agents[a.ServerName]
-	if ok {
-		delete(agents, a.ServerName)
-	}
-	log.Release("%v server is offline", a.ServerName)
+	removeAgent(a.ServerName)
 }
 
 func (a *Agent) WriteMsg(msg interface{}) {
