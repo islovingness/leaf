@@ -14,10 +14,17 @@ import (
 	"sync/atomic"
 )
 
+const (
+	NeedWaitRequestTimes = 5
+)
+
 var (
-	closeSig     chan bool
+	closing      bool
+	closeSig     = make(chan bool, 1)
+	wg           sync.WaitGroup
 	server       *network.TCPServer
-	clients      []*network.TCPClient
+	clientsMutex sync.Mutex
+	clients      = map[string]*network.TCPClient{}
 	agentsMutex  sync.Mutex
 	agents       = map[string]*Agent{}
 	AgentChanRPC *chanrpc.Server
@@ -36,18 +43,8 @@ func Init() {
 		server.Start()
 	}
 
-	for _, addr := range conf.ConnAddrs {
-		client := new(network.TCPClient)
-		client.Addr = addr
-		client.ConnectInterval = 3 * time.Second
-		client.PendingWriteNum = conf.PendingWriteNum
-		client.LenMsgLen = 4
-		client.MaxMsgLen = math.MaxUint32
-		client.NewAgent = newAgent
-		client.AutoReconnect = true
-
-		client.Start()
-		clients = append(clients, client)
+	for serverName, addr := range conf.ConnAddrs {
+		AddClient(serverName, addr)
 	}
 
 	if conf.HeartBeatInterval <= 0 {
@@ -55,10 +52,13 @@ func Init() {
 		log.Release("invalid HeartBeatInterval, reset to %v", conf.HeartBeatInterval)
 	}
 
+	wg.Add(1)
 	go run()
 }
 
 func run() {
+	defer wg.Done()
+
 	msg := &S2S_HeartBeat{}
 	timer := time.NewTicker(time.Duration(conf.HeartBeatInterval) * time.Second)
 
@@ -67,8 +67,6 @@ func run() {
 		case <-closeSig:
 			return
 		case <-timer.C:
-			timer = time.NewTicker(time.Duration(conf.HeartBeatInterval) * time.Second)
-
 			agentsMutex.Lock()
 			for _, agent := range agents {
 				if atomic.AddInt32(&agent.heartHeatWaitTimes, 1) >= 2 {
@@ -82,17 +80,41 @@ func run() {
 	}
 }
 
-func _removeAgent(serverName string) {
-	agent, ok := agents[serverName]
-	if ok {
-		delete(agents, serverName)
-		agent.Destroy()
-		log.Release("%v server is offline", serverName)
+func AddClient(serverName, addr string) error {
+	clientsMutex.Lock()
+	defer clientsMutex.Unlock()
 
-		if AgentChanRPC != nil {
-			AgentChanRPC.Go("CloseServerAgent", serverName, agent)
-		}
+	_, ok := clients[serverName]
+	if ok {
+		return fmt.Errorf("%v client is exist", serverName)
 	}
+
+	client := new(network.TCPClient)
+	client.Addr = addr
+	client.ConnectInterval = 3 * time.Second
+	client.PendingWriteNum = conf.PendingWriteNum
+	client.LenMsgLen = 4
+	client.MaxMsgLen = math.MaxUint32
+	client.NewAgent = newAgent
+	client.AutoReconnect = true
+
+	client.Start()
+	clients[serverName] = client
+	return nil
+}
+
+func RemoveClient(serverName string) error {
+	clientsMutex.Lock()
+	defer clientsMutex.Unlock()
+
+	client, ok := clients[serverName]
+	if !ok {
+		return fmt.Errorf("%v client is not exist", serverName)
+	}
+
+	client.Close()
+	delete(clients, serverName)
+	return nil
 }
 
 func addAgent(serverName string, agent *Agent) {
@@ -110,6 +132,19 @@ func addAgent(serverName string, agent *Agent) {
 	}
 }
 
+func _removeAgent(serverName string) {
+	agent, ok := agents[serverName]
+	if ok {
+		delete(agents, serverName)
+		agent.Destroy()
+		log.Release("%v server is offline", serverName)
+
+		if AgentChanRPC != nil {
+			AgentChanRPC.Go("CloseServerAgent", serverName, agent)
+		}
+	}
+}
+
 func removeAgent(serverName string) {
 	agentsMutex.Lock()
 	defer agentsMutex.Unlock()
@@ -118,20 +153,24 @@ func removeAgent(serverName string) {
 }
 
 func Destroy() {
-	var beginNoRequestTime int64 = 0
+	closing = true
+	closeSig <- true
+
+	waitRequestTimes := 0
 	for {
 		time.Sleep(time.Second)
 
-		curTime := time.Now().Unix()
-		if GetRequestCount() == 0 {
-			if beginNoRequestTime == 0 {
-				beginNoRequestTime = curTime
-				continue
-			} else if curTime-beginNoRequestTime >= 5 {
+		requestCount := GetRequestCount()
+		if requestCount == 0 {
+			waitRequestTimes += 1
+			if waitRequestTimes >= NeedWaitRequestTimes {
 				break
+			} else {
+				log.Release("wait request count down %v", NeedWaitRequestTimes-waitRequestTimes)
 			}
 		} else {
-			beginNoRequestTime = 0
+			waitRequestTimes = 0
+			log.Release("has %v request", requestCount)
 		}
 	}
 
@@ -139,9 +178,13 @@ func Destroy() {
 		server.Close()
 	}
 
+	clientsMutex.Lock()
 	for _, client := range clients {
 		client.Close()
 	}
+	clientsMutex.Unlock()
+
+	wg.Wait()
 }
 
 type Agent struct {
@@ -194,6 +237,17 @@ func (a *Agent) popRequest(requestID uint32) *RequestInfo {
 	}
 }
 
+func (a *Agent) clearRequest(err error) {
+	a.requestMutex.Lock()
+	defer a.requestMutex.Unlock()
+
+	for _, request := range a.requestMap {
+		ret := &chanrpc.RetInfo{Err: err, Cb: request.cb}
+		request.chanRet <- ret
+	}
+	a.requestMap = make(map[uint32]*RequestInfo)
+}
+
 func (a *Agent) Run() {
 	for {
 		data, err := a.conn.ReadMsg()
@@ -219,6 +273,7 @@ func (a *Agent) Run() {
 
 func (a *Agent) OnClose() {
 	removeAgent(a.ServerName)
+	a.clearRequest(fmt.Errorf("%v server is offline", a.ServerName))
 }
 
 func (a *Agent) WriteMsg(msg interface{}) {

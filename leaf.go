@@ -10,6 +10,10 @@ import (
 	"os/signal"
 )
 
+var (
+	OnDestroy func()
+)
+
 func Run(mods ...module.Module) {
 	// logger
 	if conf.LogLevel != "" {
@@ -40,6 +44,10 @@ func Run(mods ...module.Module) {
 	signal.Notify(c, os.Interrupt, os.Kill)
 	sig := <-c
 	log.Release("Leaf closing down (signal: %v)", sig)
+
+	if OnDestroy != nil {
+		OnDestroy()
+	}
 	console.Destroy()
 	cluster.Destroy()
 	module.Destroy()

@@ -16,7 +16,7 @@ var (
 	// cluster
 	ServerName			string
 	ListenAddr			string
-	ConnAddrs			[]string
+	ConnAddrs			map[string]string
 	PendingWriteNum 	int
 	HeartBeatInterval	int
 )

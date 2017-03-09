@@ -8,6 +8,7 @@ import (
 	"github.com/name5566/leaf/log"
 	"sync/atomic"
 	"encoding/gob"
+	"github.com/name5566/leaf/conf"
 )
 
 var (
@@ -59,21 +60,19 @@ func handleRequestMsg(args []interface{}) {
 	recvMsg := args[0].(*S2S_RequestMsg)
 	agent := args[1].(*Agent)
 
-	msgID := recvMsg.MsgID
 	sendMsg := &S2S_ResponseMsg{RequestID: recvMsg.RequestID}
+	if closing && recvMsg.CallType == callForResult {
+		sendMsg.Err = fmt.Sprintf("%v server is closing", conf.ServerName)
+		agent.WriteMsg(sendMsg)
+		return
+	}
+
+	msgID := recvMsg.MsgID
 	client, ok := routeMap[msgID]
 	if !ok {
 		sendMsg.Err = fmt.Sprintf("%v msg is not set route", msgID)
 		agent.WriteMsg(sendMsg)
 		return
-	}
-
-	sendMsgFunc := func(ret *chanrpc.RetInfo) {
-		sendMsg.Ret = ret.Ret
-		if ret.Err != nil {
-			sendMsg.Err = ret.Err.Error()
-		}
-		agent.WriteMsg(sendMsg)
 	}
 
 	args = recvMsg.Args
@@ -82,6 +81,14 @@ func handleRequestMsg(args []interface{}) {
 		args = append(args, nil)
 		client.RpcCall(msgID, args...)
 	default:
+		sendMsgFunc := func(ret *chanrpc.RetInfo) {
+			sendMsg.Ret = ret.Ret
+			if ret.Err != nil {
+				sendMsg.Err = ret.Err.Error()
+			}
+			agent.WriteMsg(sendMsg)
+		}
+
 		args = append(args, sendMsgFunc)
 		client.RpcCall(msgID, args...)
 	}
