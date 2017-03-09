@@ -17,6 +17,15 @@ var commands = []Command{
 	new(CommandProf),
 }
 
+func getCommand(name string) Command {
+	for _, _c := range commands {
+		if _c.name() == name {
+			return _c
+		}
+	}
+	return nil
+}
+
 type Command interface {
 	// must goroutine safe
 	name() string

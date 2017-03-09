@@ -3,6 +3,7 @@ package cluster
 import (
 	"fmt"
 	"github.com/name5566/leaf/chanrpc"
+	"github.com/name5566/leaf/log"
 )
 
 var (
@@ -50,6 +51,8 @@ func Go(serverName string, id interface{}, args ...interface{}) {
 	agent := GetAgent(serverName)
 	if agent != nil {
 		agent.Go(id, args...)
+	}else {
+		log.Error("%v server is offline", serverName)
 	}
 }
 
