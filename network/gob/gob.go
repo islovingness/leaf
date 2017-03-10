@@ -25,7 +25,7 @@ type MsgHandler func([]interface{})
 
 type MsgRaw struct {
 	msgID		string
-	msgDecoder	*gob.Decoder
+	msgRawData 	[]byte
 }
 
 func NewProcessor() *Processor {
@@ -105,7 +105,7 @@ func (p *Processor) Route(msg interface{}, userData interface{}) error {
 			return fmt.Errorf("message %v not registered", msgRaw.msgID)
 		}
 		if i.msgRawHandler != nil {
-			i.msgRawHandler([]interface{}{msgRaw.msgID, msgRaw.msgDecoder, userData})
+			i.msgRawHandler([]interface{}{msgRaw.msgID, msgRaw.msgRawData, userData})
 		}
 		return nil
 	}
@@ -125,6 +125,8 @@ func (p *Processor) Route(msg interface{}, userData interface{}) error {
 	}
 	if i.msgRouter != nil {
 		i.msgRouter.Go(msgType, msg, userData)
+	} else if i.msgHandler == nil {
+		log.Error("%v msg without any handler", msgID)
 	}
 	return nil
 }
@@ -148,7 +150,7 @@ func (p *Processor) Unmarshal(data []byte) (interface{}, error) {
 
 	// msg
 	if i.msgRawHandler != nil {
-		return MsgRaw{msgID, dec}, nil
+		return MsgRaw{msgID, network.Bytes()}, nil
 	} else {
 		msg := reflect.New(i.msgType.Elem()).Interface()
 		return msg, dec.Decode(msg)
