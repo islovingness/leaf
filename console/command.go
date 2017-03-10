@@ -9,6 +9,7 @@ import (
 	"path"
 	"runtime/pprof"
 	"time"
+	"strings"
 )
 
 var commands = []Command{
@@ -19,7 +20,7 @@ var commands = []Command{
 
 func getCommand(name string) Command {
 	for _, _c := range commands {
-		if _c.name() == name {
+		if strings.EqualFold(_c.name(), name) {
 			return _c
 		}
 	}

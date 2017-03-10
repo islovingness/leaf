@@ -80,14 +80,11 @@ func run() {
 	}
 }
 
-func AddClient(serverName, addr string) error {
+func AddClient(serverName, addr string) {
 	clientsMutex.Lock()
 	defer clientsMutex.Unlock()
 
-	_, ok := clients[serverName]
-	if ok {
-		return fmt.Errorf("%v client is exist", serverName)
-	}
+	_removeClient(serverName)
 
 	client := new(network.TCPClient)
 	client.Addr = addr
@@ -100,21 +97,21 @@ func AddClient(serverName, addr string) error {
 
 	client.Start()
 	clients[serverName] = client
-	return nil
 }
 
-func RemoveClient(serverName string) error {
+func _removeClient(serverName string) {
+	client, ok := clients[serverName]
+	if ok {
+		client.Close()
+		delete(clients, serverName)
+	}
+}
+
+func RemoveClient(serverName string) {
 	clientsMutex.Lock()
 	defer clientsMutex.Unlock()
 
-	client, ok := clients[serverName]
-	if !ok {
-		return fmt.Errorf("%v client is not exist", serverName)
-	}
-
-	client.Close()
-	delete(clients, serverName)
-	return nil
+	_removeClient(serverName)
 }
 
 func addAgent(serverName string, agent *Agent) {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/name5566/leaf/chanrpc"
 	"github.com/name5566/leaf/log"
+	"regexp"
 )
 
 var (
@@ -44,6 +45,18 @@ func GetAgent(serverName string) *Agent {
 		return agent
 	} else {
 		return nil
+	}
+}
+
+func Broadcast(serverType string, id interface{}, args ...interface{}) {
+	agentsMutex.Lock()
+	defer agentsMutex.Unlock()
+
+	r, _ := regexp.Compile(fmt.Sprintf("%s[0-9]+$", serverType))
+	for agentName, agent := range agents {
+		if r.MatchString(agentName) {
+			agent.Go(id, args...)
+		}
 	}
 }
 
