@@ -88,6 +88,7 @@ func AddClient(serverName, addr string) {
 
 	client := new(network.TCPClient)
 	client.Addr = addr
+	client.ConnNum = 1
 	client.ConnectInterval = 3 * time.Second
 	client.PendingWriteNum = conf.PendingWriteNum
 	client.LenMsgLen = 4
