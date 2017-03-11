@@ -15,6 +15,8 @@ type Gate struct {
 	MaxMsgLen       uint32
 	Processor       network.Processor
 	AgentChanRPC    *chanrpc.Server
+	StartAgentRun	func(Agent)
+	EndAgentRun		func(Agent)
 
 	// websocket
 	WSAddr      string
@@ -90,6 +92,20 @@ type agent struct {
 }
 
 func (a *agent) Run() {
+	if a.gate.StartAgentRun != nil {
+		a.gate.StartAgentRun(a)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			log.Recover(r)
+		}
+
+		if a.gate.EndAgentRun != nil {
+			a.gate.EndAgentRun(a)
+		}
+	}()
+
 	for {
 		data, err := a.conn.ReadMsg()
 		if err != nil {

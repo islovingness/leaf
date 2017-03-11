@@ -3,9 +3,7 @@ package chanrpc
 import (
 	"errors"
 	"fmt"
-	"github.com/name5566/leaf/conf"
 	"github.com/name5566/leaf/log"
-	"runtime"
 )
 
 // one server per goroutine (goroutine not safe)
@@ -40,6 +38,9 @@ type RetInfo struct {
 	// func(Ret []interface{}, Err error)
 	Cb interface{}
 }
+
+type ExternalRetFunc func(ret interface{}, err error)
+type GetExternalRetFunc func() ExternalRetFunc
 
 type Client struct {
 	s               *Server
@@ -91,7 +92,7 @@ func (s *Server) ret(ci *CallInfo, ri *RetInfo) (err error) {
 
 	defer func() {
 		if r := recover(); r != nil {
-			err = r.(error)
+			log.Recover(r)
 		}
 	}()
 
@@ -103,35 +104,42 @@ func (s *Server) ret(ci *CallInfo, ri *RetInfo) (err error) {
 func (s *Server) exec(ci *CallInfo) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			if conf.LenStackBuf > 0 {
-				buf := make([]byte, conf.LenStackBuf)
-				l := runtime.Stack(buf, false)
-				err = fmt.Errorf("%v: %s", r, buf[:l])
-			} else {
-				err = fmt.Errorf("%v", r)
-			}
-
+			log.Recover(r)
 			s.ret(ci, &RetInfo{Err: fmt.Errorf("%v", r)})
 		}
 	}()
 
+	isExternalRet := false
+	var getRetFunc GetExternalRetFunc = func() ExternalRetFunc {
+		isExternalRet = true
+		return func(ret interface{}, err error) {
+			err = s.ret(ci, &RetInfo{Ret: ret, Err: err})
+			if err != nil {
+				log.Error("external run return is error: %v", err)
+			}
+		}
+	}
+	ci.args = append(ci.args, getRetFunc)
+
 	// execute
+	retInfo := &RetInfo{}
 	switch ci.f.(type) {
 	case func([]interface{}):
 		ci.f.(func([]interface{}))(ci.args)
-		return s.ret(ci, &RetInfo{})
 	case func([]interface{}) error:
-		err := ci.f.(func([]interface{}) error)(ci.args)
-		return s.ret(ci, &RetInfo{Err: err})
+		retInfo.Err = ci.f.(func([]interface{}) error)(ci.args)
 	case func([]interface{}) (interface{}, error):
-		ret, err := ci.f.(func([]interface{}) (interface{}, error))(ci.args)
-		return s.ret(ci, &RetInfo{Ret: ret, Err: err})
+		retInfo.Ret, retInfo.Err = ci.f.(func([]interface{}) (interface{}, error))(ci.args)
 	case func([]interface{}) ([]interface{}, error):
-		ret, err := ci.f.(func([]interface{}) ([]interface{}, error))(ci.args)
-		return s.ret(ci, &RetInfo{Ret: ret, Err: err})
+		retInfo.Ret, retInfo.Err = ci.f.(func([]interface{}) ([]interface{}, error))(ci.args)
+	default:
+		panic("bug")
 	}
 
-	panic("bug")
+	if !isExternalRet {
+		return s.ret(ci, retInfo)
+	}
+	return
 }
 
 func (s *Server) Exec(ci *CallInfo) {
@@ -145,11 +153,14 @@ func (s *Server) Exec(ci *CallInfo) {
 func (s *Server) Go(id interface{}, args ...interface{}) {
 	f := s.functions[id]
 	if f == nil {
+		log.Error("function id %v: function not registered", id)
 		return
 	}
 
 	defer func() {
-		recover()
+		if r := recover(); r != nil {
+			log.Recover(r)
+		}
 	}()
 
 	s.ChanCall <- &CallInfo{
@@ -208,7 +219,8 @@ func (c *Client) GetServer() *Server {
 func (c *Client) call(ci *CallInfo, block bool) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = r.(error)
+			log.Recover(r)
+			err = fmt.Errorf("%v", r)
 		}
 	}()
 
@@ -394,13 +406,7 @@ func (c *Client) AsynCall(id interface{}, _args ...interface{}) {
 func execCb(ri *RetInfo) {
 	defer func() {
 		if r := recover(); r != nil {
-			if conf.LenStackBuf > 0 {
-				buf := make([]byte, conf.LenStackBuf)
-				l := runtime.Stack(buf, false)
-				log.Error("%v: %s", r, buf[:l])
-			} else {
-				log.Error("%v", r)
-			}
+			log.Recover(r)
 		}
 	}()
 
