@@ -115,6 +115,11 @@ func handleResponseMsg(args []interface{}) {
 }
 
 func init() {
+	Processor.Register(&S2S_NotifyServerName{})
+	Processor.Register(&S2S_HeartBeat{})
+	Processor.Register(&S2S_RequestMsg{})
+	Processor.Register(&S2S_ResponseMsg{})
+
 	Processor.SetHandler(&S2S_NotifyServerName{}, handleNotifyServerName)
 	Processor.SetHandler(&S2S_HeartBeat{}, handleHeartBeat)
 	Processor.SetHandler(&S2S_RequestMsg{}, handleRequestMsg)

@@ -62,8 +62,7 @@ func (p *Processor) SetRouter(msg interface{}, msgRouter *chanrpc.Server) {
 	msgID := msgType.Elem().Name()
 	i, ok := p.msgInfo[msgID]
 	if !ok {
-		p.Register(msg)
-		i, ok = p.msgInfo[msgID]
+		log.Fatal("message %v not registered", msgID)
 	}
 
 	i.msgRouter = msgRouter
@@ -78,15 +77,19 @@ func (p *Processor) SetHandler(msg interface{}, msgHandler MsgHandler) {
 	msgID := msgType.Elem().Name()
 	i, ok := p.msgInfo[msgID]
 	if !ok {
-		p.Register(msg)
-		i, ok = p.msgInfo[msgID]
+		log.Fatal("message %v not registered", msgID)
 	}
 
 	i.msgHandler = msgHandler
 }
 
 // It's dangerous to call the method on routing or marshaling (unmarshaling)
-func (p *Processor) SetRawHandler(msgID string, msgRawHandler MsgHandler) {
+func (p *Processor) SetRawHandler(msg interface{}, msgRawHandler MsgHandler) {
+	msgType := reflect.TypeOf(msg)
+	if msgType == nil || msgType.Kind() != reflect.Ptr {
+		log.Fatal("json message pointer required")
+	}
+	msgID := msgType.Elem().Name()
 	i, ok := p.msgInfo[msgID]
 	if !ok {
 		log.Fatal("message %v not registered", msgID)
