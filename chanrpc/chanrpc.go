@@ -15,8 +15,9 @@ type Server struct {
 	// func(args []interface{})
 	// func(args []interface{}) interface{}
 	// func(args []interface{}) []interface{}
-	functions map[interface{}]interface{}
-	ChanCall  chan *CallInfo
+	functions   map[interface{}]interface{}
+	extRetFuncs map[string]bool
+	ChanCall    chan *CallInfo
 }
 
 type CallInfo struct {
@@ -39,8 +40,7 @@ type RetInfo struct {
 	Cb interface{}
 }
 
-type ExternalRetFunc func(ret interface{}, err error)
-type GetExternalRetFunc func() ExternalRetFunc
+type ExtRetFunc func(ret interface{}, err error)
 
 type Client struct {
 	s               *Server
@@ -52,6 +52,7 @@ type Client struct {
 func NewServer(l int) *Server {
 	s := new(Server)
 	s.functions = make(map[interface{}]interface{})
+	s.extRetFuncs = make(map[string]bool)
 	s.ChanCall = make(chan *CallInfo, l)
 	return s
 }
@@ -82,6 +83,11 @@ func (s *Server) Register(id interface{}, f interface{}) {
 	s.functions[id] = f
 }
 
+func (s *Server) RegisterExtRet(id interface{}, f interface{}) {
+	s.Register(id, f)
+	s.extRetFuncs[fmt.Sprintf("%v", f)] = true
+}
+
 func (s *Server) ret(ci *CallInfo, ri *RetInfo) (err error) {
 	if ci.chanRet == nil {
 		if ci.cb != nil {
@@ -109,17 +115,16 @@ func (s *Server) exec(ci *CallInfo) (err error) {
 		}
 	}()
 
-	isExternalRet := false
-	var getRetFunc GetExternalRetFunc = func() ExternalRetFunc {
-		isExternalRet = true
-		return func(ret interface{}, err error) {
-			err = s.ret(ci, &RetInfo{Ret: ret, Err: err})
-			if err != nil {
-				log.Error("external run return is error: %v", err)
-			}
+	_, isExtRet := s.extRetFuncs[fmt.Sprintf("%v", ci.f)]
+	var extRetFunc ExtRetFunc = func(ret interface{}, err error) {
+		err = s.ret(ci, &RetInfo{Ret: ret, Err: err})
+		if err != nil {
+			log.Error("external run return is error: %v", err)
 		}
 	}
-	ci.args = append(ci.args, getRetFunc)
+	if isExtRet {
+		ci.args = append(ci.args, extRetFunc)
+	}
 
 	// execute
 	retInfo := &RetInfo{}
@@ -136,7 +141,7 @@ func (s *Server) exec(ci *CallInfo) (err error) {
 		panic("bug")
 	}
 
-	if !isExternalRet {
+	if !isExtRet {
 		return s.ret(ci, retInfo)
 	}
 	return
@@ -345,12 +350,12 @@ func (c *Client) RpcCall(id interface{}, args ...interface{}) {
 	}
 
 	err = c.call(&CallInfo{
-		f:       f,
-		args:    args,
-		cb:      cb,
+		f:    f,
+		args: args,
+		cb:   cb,
 	}, false)
 	if err != nil && cbFunc != nil {
-		cbFunc(&RetInfo{Ret:nil, Err:err})
+		cbFunc(&RetInfo{Ret: nil, Err: err})
 	}
 }
 
