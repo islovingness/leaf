@@ -136,9 +136,8 @@ func (p *Processor) Route(msg interface{}, userData interface{}) error {
 
 // goroutine safe
 func (p *Processor) Unmarshal(data []byte) (interface{}, error) {
-	var network bytes.Buffer
-	network.Write(data)
-	dec := gob.NewDecoder(&network)
+	network := bytes.NewBuffer(data)
+	dec := gob.NewDecoder(network)
 
 	var msgID string
 	err := dec.Decode(&msgID)
