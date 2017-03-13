@@ -17,8 +17,8 @@ type RequestInfo struct {
 }
 
 func GetRequestCount() int {
-	agentsMutex.Lock()
-	defer agentsMutex.Unlock()
+	agentsMutex.RLock()
+	defer agentsMutex.RUnlock()
 
 	var count int = 0
 	for _, agent := range agents {
@@ -37,8 +37,8 @@ func SetRoute(id interface{}, server *chanrpc.Server) {
 }
 
 func GetAgent(serverName string) *Agent {
-	agentsMutex.Lock()
-	defer agentsMutex.Unlock()
+	agentsMutex.RLock()
+	defer agentsMutex.RUnlock()
 
 	agent, ok := agents[serverName]
 	if ok {
@@ -49,8 +49,8 @@ func GetAgent(serverName string) *Agent {
 }
 
 func Broadcast(serverType string, id interface{}, args ...interface{}) {
-	agentsMutex.Lock()
-	defer agentsMutex.Unlock()
+	agentsMutex.RLock()
+	defer agentsMutex.RUnlock()
 
 	r, _ := regexp.Compile(fmt.Sprintf("%s[0-9]+$", serverType))
 	for agentName, agent := range agents {

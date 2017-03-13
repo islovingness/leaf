@@ -25,7 +25,7 @@ var (
 	server       *network.TCPServer
 	clientsMutex sync.Mutex
 	clients      = map[string]*network.TCPClient{}
-	agentsMutex  sync.Mutex
+	agentsMutex  sync.RWMutex
 	agents       = map[string]*Agent{}
 	AgentChanRPC *chanrpc.Server
 )
@@ -67,7 +67,7 @@ func run() {
 		case <-closeSig:
 			return
 		case <-timer.C:
-			agentsMutex.Lock()
+			agentsMutex.RLock()
 			for _, agent := range agents {
 				if atomic.AddInt32(&agent.heartHeatWaitTimes, 1) >= 2 {
 					agent.conn.Destroy()
@@ -75,7 +75,7 @@ func run() {
 					agent.WriteMsg(msg)
 				}
 			}
-			agentsMutex.Unlock()
+			agentsMutex.RUnlock()
 		}
 	}
 }
@@ -191,8 +191,8 @@ type Agent struct {
 	userData           interface{}
 	heartHeatWaitTimes int32
 
+	sync.Mutex
 	requestID    uint32
-	requestMutex sync.Mutex
 	requestMap   map[uint32]*RequestInfo
 }
 
@@ -207,14 +207,14 @@ func newAgent(conn *network.TCPConn) network.Agent {
 }
 
 func (a *Agent) GetRequestCount() int {
-	a.requestMutex.Lock()
-	defer a.requestMutex.Unlock()
+	a.Lock()
+	defer a.Unlock()
 	return len(a.requestMap)
 }
 
 func (a *Agent) registerRequest(request *RequestInfo) uint32 {
-	a.requestMutex.Lock()
-	defer a.requestMutex.Unlock()
+	a.Lock()
+	defer a.Unlock()
 
 	reqID := a.requestID
 	a.requestMap[reqID] = request
@@ -223,8 +223,8 @@ func (a *Agent) registerRequest(request *RequestInfo) uint32 {
 }
 
 func (a *Agent) popRequest(requestID uint32) *RequestInfo {
-	a.requestMutex.Lock()
-	defer a.requestMutex.Unlock()
+	a.Lock()
+	defer a.Unlock()
 
 	request, ok := a.requestMap[requestID]
 	if ok {
@@ -236,8 +236,8 @@ func (a *Agent) popRequest(requestID uint32) *RequestInfo {
 }
 
 func (a *Agent) clearRequest(err error) {
-	a.requestMutex.Lock()
-	defer a.requestMutex.Unlock()
+	a.Lock()
+	defer a.Unlock()
 
 	for _, request := range a.requestMap {
 		ret := &chanrpc.RetInfo{Err: err, Cb: request.cb}
