@@ -11,7 +11,23 @@ import (
 )
 
 type Processor struct {
-	msgInfo map[string]*MsgInfo
+	encoders chan *Encoder
+	decoders chan *Decoder
+	msgInfo  map[string]*MsgInfo
+}
+
+type Buffer struct {
+	*bytes.Buffer
+}
+
+type Encoder struct {
+	buffer *bytes.Buffer
+	coder  *gob.Encoder
+}
+
+type Decoder struct {
+	buffer *Buffer
+	coder  *gob.Decoder
 }
 
 type MsgInfo struct {
@@ -24,14 +40,46 @@ type MsgInfo struct {
 type MsgHandler func([]interface{})
 
 type MsgRaw struct {
-	msgID		string
-	msgRawData 	[]byte
+	msgID      string
+	msgRawData []byte
 }
 
-func NewProcessor() *Processor {
+func NewProcessor(coderPoolSize int) *Processor {
 	p := new(Processor)
+	p.encoders = make(chan *Encoder, coderPoolSize)
+	p.decoders = make(chan *Decoder, coderPoolSize)
+	for i := 0; i < coderPoolSize; i++ {
+		encoderBuff := &bytes.Buffer{}
+		encoder := gob.NewEncoder(encoderBuff)
+		p.encoders <- &Encoder{encoderBuff, encoder}
+
+		decoderBuff := &Buffer{}
+		decoder := gob.NewDecoder(decoderBuff)
+		p.decoders <- &Decoder{decoderBuff, decoder}
+	}
+
 	p.msgInfo = make(map[string]*MsgInfo)
 	return p
+}
+
+func (p *Processor) popEncoder() *Encoder {
+	coder := <-p.encoders
+	coder.buffer.Reset()
+	return coder
+}
+
+func (p *Processor) pushEncoder(coder *Encoder) {
+	p.encoders <- coder
+}
+
+func (p *Processor) popDecoder(data []byte) *Decoder {
+	coder := <-p.decoders
+	coder.buffer.Buffer = bytes.NewBuffer(data)
+	return coder
+}
+
+func (p *Processor) pushDecoder(coder *Decoder) {
+	p.decoders <- coder
 }
 
 // It's dangerous to call the method on routing or marshaling (unmarshaling)
@@ -136,11 +184,11 @@ func (p *Processor) Route(msg interface{}, userData interface{}) error {
 
 // goroutine safe
 func (p *Processor) Unmarshal(data []byte) (interface{}, error) {
-	network := bytes.NewBuffer(data)
-	dec := gob.NewDecoder(network)
+	dec := p.popDecoder(data)
+	defer p.pushDecoder(dec)
 
 	var msgID string
-	err := dec.Decode(&msgID)
+	err := dec.coder.Decode(&msgID)
 	if err != nil {
 		return nil, err
 	}
@@ -152,10 +200,10 @@ func (p *Processor) Unmarshal(data []byte) (interface{}, error) {
 
 	// msg
 	if i.msgRawHandler != nil {
-		return MsgRaw{msgID, network.Bytes()}, nil
+		return MsgRaw{msgID, dec.buffer.Bytes()}, nil
 	} else {
 		msg := reflect.New(i.msgType.Elem()).Interface()
-		return msg, dec.Decode(msg)
+		return msg, dec.coder.Decode(msg)
 	}
 
 	panic("bug")
@@ -173,13 +221,14 @@ func (p *Processor) Marshal(msg interface{}) ([][]byte, error) {
 	}
 
 	// data
-	var network bytes.Buffer
-	enc := gob.NewEncoder(&network)
-	err := enc.Encode(&msgID)
+	enc := p.popEncoder()
+	defer p.pushEncoder(enc)
+
+	err := enc.coder.Encode(&msgID)
 	if err != nil {
-		return [][]byte{network.Bytes()}, err
+		return [][]byte{enc.buffer.Bytes()}, err
 	}
 
-	err = enc.Encode(msg)
-	return [][]byte{network.Bytes()}, err
+	err = enc.coder.Encode(msg)
+	return [][]byte{enc.buffer.Bytes()}, err
 }

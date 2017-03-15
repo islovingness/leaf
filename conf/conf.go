@@ -19,4 +19,5 @@ var (
 	ConnAddrs         map[string]string
 	PendingWriteNum   int
 	HeartBeatInterval int
+	GobCoderPoolSize  = 128
 )
