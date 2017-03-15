@@ -21,7 +21,7 @@ type Buffer struct {
 }
 
 type Encoder struct {
-	buffer *bytes.Buffer
+	buffer *Buffer
 	coder  *gob.Encoder
 }
 
@@ -49,7 +49,7 @@ func NewProcessor(coderPoolSize int) *Processor {
 	p.encoders = make(chan *Encoder, coderPoolSize)
 	p.decoders = make(chan *Decoder, coderPoolSize)
 	for i := 0; i < coderPoolSize; i++ {
-		encoderBuff := &bytes.Buffer{}
+		encoderBuff := &Buffer{}
 		encoder := gob.NewEncoder(encoderBuff)
 		p.encoders <- &Encoder{encoderBuff, encoder}
 
@@ -64,7 +64,7 @@ func NewProcessor(coderPoolSize int) *Processor {
 
 func (p *Processor) popEncoder() *Encoder {
 	coder := <-p.encoders
-	coder.buffer.Reset()
+	coder.buffer.Buffer = &bytes.Buffer{}
 	return coder
 }
 
