@@ -99,6 +99,11 @@ func (p *Processor) Register(msg interface{}) string {
 	i := new(MsgInfo)
 	i.msgType = msgType
 	p.msgInfo[msgID] = i
+
+	for i := 0; i < len(p.decoders); i++ {
+		data, _ := p.Marshal(msg)
+		p.Unmarshal(data[0])
+	}
 	return msgID
 }
 
