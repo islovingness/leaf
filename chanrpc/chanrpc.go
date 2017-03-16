@@ -261,6 +261,8 @@ func (c *Client) f(id interface{}, n int) (f interface{}, err error) {
 		_, ok = f.(func([]interface{}) (interface{}, error))
 	case 2:
 		_, ok = f.(func([]interface{}) ([]interface{}, error))
+	case -1:
+		ok = true
 	default:
 		panic("bug")
 	}
@@ -394,6 +396,8 @@ func (c *Client) AsynCall(id interface{}, _args ...interface{}) {
 		n = 1
 	case func([]interface{}, error):
 		n = 2
+	case ExtRetFunc:
+		n = -1
 	default:
 		panic("definition of callback function is invalid")
 	}
@@ -423,6 +427,8 @@ func execCb(ri *RetInfo) {
 		ri.Cb.(func(interface{}, error))(ri.Ret, ri.Err)
 	case func([]interface{}, error):
 		ri.Cb.(func([]interface{}, error))(Assert(ri.Ret), ri.Err)
+	case ExtRetFunc:
+		ri.Cb.(ExtRetFunc)(ri.Ret, ri.Err)
 	default:
 		panic("bug")
 	}

@@ -69,7 +69,7 @@ func run() {
 		case <-timer.C:
 			agentsMutex.RLock()
 			for _, agent := range agents {
-				if atomic.AddInt32(&agent.heartHeatWaitTimes, 1) >= 2 {
+				if atomic.AddInt32(&agent.heartBeatWaitTimes, 1) >= 2 {
 					agent.conn.Destroy()
 				} else {
 					agent.WriteMsg(msg)
@@ -189,7 +189,7 @@ type Agent struct {
 	ServerName         string
 	conn               *network.TCPConn
 	userData           interface{}
-	heartHeatWaitTimes int32
+	heartBeatWaitTimes int32
 
 	sync.Mutex
 	requestID    uint32

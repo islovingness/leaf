@@ -53,7 +53,7 @@ func handleNotifyServerName(args []interface{}) {
 
 func handleHeartBeat(args []interface{}) {
 	agent := args[1].(*Agent)
-	atomic.StoreInt32(&agent.heartHeatWaitTimes, 0)
+	atomic.StoreInt32(&agent.heartBeatWaitTimes, 0)
 }
 
 func handleRequestMsg(args []interface{}) {
