@@ -6,6 +6,12 @@ import (
 	"github.com/name5566/leaf/log"
 )
 
+const (
+	FuncCommon = iota
+	FuncExtRet
+	FuncRoute
+)
+
 // one server per goroutine (goroutine not safe)
 // one client per goroutine (goroutine not safe)
 type Server struct {
@@ -15,13 +21,18 @@ type Server struct {
 	// func(args []interface{})
 	// func(args []interface{}) interface{}
 	// func(args []interface{}) []interface{}
-	functions   map[interface{}]interface{}
-	extRetFuncs map[string]bool
-	ChanCall    chan *CallInfo
+	functions map[interface{}]*FuncInfo
+	ChanCall  chan *CallInfo
+}
+
+type FuncInfo struct {
+	id    interface{}
+	f     interface{}
+	fType int
 }
 
 type CallInfo struct {
-	f       interface{}
+	fInfo   *FuncInfo
 	args    []interface{}
 	chanRet chan *RetInfo
 	cb      interface{}
@@ -51,8 +62,7 @@ type Client struct {
 
 func NewServer(l int) *Server {
 	s := new(Server)
-	s.functions = make(map[interface{}]interface{})
-	s.extRetFuncs = make(map[string]bool)
+	s.functions = make(map[interface{}]*FuncInfo)
 	s.ChanCall = make(chan *CallInfo, l)
 	return s
 }
@@ -66,7 +76,7 @@ func Assert(i interface{}) []interface{} {
 }
 
 // you must call the function before calling Open and Go
-func (s *Server) Register(id interface{}, f interface{}) {
+func (s *Server) RegisterFromType(id interface{}, f interface{}, fType int) {
 	switch f.(type) {
 	case func([]interface{}):
 	case func([]interface{}) error:
@@ -80,12 +90,11 @@ func (s *Server) Register(id interface{}, f interface{}) {
 		panic(fmt.Sprintf("function id %v: already registered", id))
 	}
 
-	s.functions[id] = f
+	s.functions[id] = &FuncInfo{id: id, f: f, fType: fType}
 }
 
-func (s *Server) RegisterExtRet(id interface{}, f interface{}) {
-	s.Register(id, f)
-	s.extRetFuncs[fmt.Sprintf("%v", f)] = true
+func (s *Server) Register(id interface{}, f interface{}) {
+	s.RegisterFromType(id, f, FuncCommon)
 }
 
 func (s *Server) ret(ci *CallInfo, ri *RetInfo) (err error) {
@@ -115,33 +124,36 @@ func (s *Server) exec(ci *CallInfo) (err error) {
 		}
 	}()
 
-	_, isExtRet := s.extRetFuncs[fmt.Sprintf("%v", ci.f)]
-	var extRetFunc ExtRetFunc = func(ret interface{}, err error) {
-		err = s.ret(ci, &RetInfo{Ret: ret, Err: err})
-		if err != nil {
-			log.Error("external run return is error: %v", err)
+	if ci.fInfo.fType != FuncCommon {
+		var extRetFunc ExtRetFunc = func(ret interface{}, err error) {
+			err = s.ret(ci, &RetInfo{Ret: ret, Err: err})
+			if err != nil {
+				log.Error("external run return is error: %v", err)
+			}
 		}
-	}
-	if isExtRet {
+
+		if ci.fInfo.fType == FuncRoute {
+			ci.args = append([]interface{}{ci.fInfo.id}, ci.args...)
+		}
 		ci.args = append(ci.args, extRetFunc)
 	}
 
 	// execute
 	retInfo := &RetInfo{}
-	switch ci.f.(type) {
+	switch ci.fInfo.f.(type) {
 	case func([]interface{}):
-		ci.f.(func([]interface{}))(ci.args)
+		ci.fInfo.f.(func([]interface{}))(ci.args)
 	case func([]interface{}) error:
-		retInfo.Err = ci.f.(func([]interface{}) error)(ci.args)
+		retInfo.Err = ci.fInfo.f.(func([]interface{}) error)(ci.args)
 	case func([]interface{}) (interface{}, error):
-		retInfo.Ret, retInfo.Err = ci.f.(func([]interface{}) (interface{}, error))(ci.args)
+		retInfo.Ret, retInfo.Err = ci.fInfo.f.(func([]interface{}) (interface{}, error))(ci.args)
 	case func([]interface{}) ([]interface{}, error):
-		retInfo.Ret, retInfo.Err = ci.f.(func([]interface{}) ([]interface{}, error))(ci.args)
+		retInfo.Ret, retInfo.Err = ci.fInfo.f.(func([]interface{}) ([]interface{}, error))(ci.args)
 	default:
 		panic("bug")
 	}
 
-	if !isExtRet {
+	if ci.fInfo.fType == FuncCommon {
 		return s.ret(ci, retInfo)
 	}
 	return
@@ -169,8 +181,8 @@ func (s *Server) Go(id interface{}, args ...interface{}) {
 	}()
 
 	s.ChanCall <- &CallInfo{
-		f:    f,
-		args: args,
+		fInfo: f,
+		args:  args,
 	}
 }
 
@@ -241,14 +253,14 @@ func (c *Client) call(ci *CallInfo, block bool) (err error) {
 	return
 }
 
-func (c *Client) f(id interface{}, n int) (f interface{}, err error) {
+func (c *Client) f(id interface{}, n int) (fInfo *FuncInfo, err error) {
 	if c.s == nil {
 		err = errors.New("server not attached")
 		return
 	}
 
-	f = c.s.functions[id]
-	if f == nil {
+	fInfo = c.s.functions[id]
+	if fInfo == nil {
 		err = fmt.Errorf("function id %v: function not registered", id)
 		return
 	}
@@ -256,11 +268,11 @@ func (c *Client) f(id interface{}, n int) (f interface{}, err error) {
 	var ok bool
 	switch n {
 	case 0:
-		_, ok = f.(func([]interface{}) error)
+		_, ok = fInfo.f.(func([]interface{}) error)
 	case 1:
-		_, ok = f.(func([]interface{}) (interface{}, error))
+		_, ok = fInfo.f.(func([]interface{}) (interface{}, error))
 	case 2:
-		_, ok = f.(func([]interface{}) ([]interface{}, error))
+		_, ok = fInfo.f.(func([]interface{}) ([]interface{}, error))
 	case -1:
 		ok = true
 	default:
@@ -280,7 +292,7 @@ func (c *Client) Call0(id interface{}, args ...interface{}) error {
 	}
 
 	err = c.call(&CallInfo{
-		f:       f,
+		fInfo:   f,
 		args:    args,
 		chanRet: c.ChanSyncRet,
 	}, true)
@@ -299,7 +311,7 @@ func (c *Client) Call1(id interface{}, args ...interface{}) (interface{}, error)
 	}
 
 	err = c.call(&CallInfo{
-		f:       f,
+		fInfo:   f,
 		args:    args,
 		chanRet: c.ChanSyncRet,
 	}, true)
@@ -318,7 +330,7 @@ func (c *Client) CallN(id interface{}, args ...interface{}) ([]interface{}, erro
 	}
 
 	err = c.call(&CallInfo{
-		f:       f,
+		fInfo:   f,
 		args:    args,
 		chanRet: c.ChanSyncRet,
 	}, true)
@@ -352,9 +364,9 @@ func (c *Client) RpcCall(id interface{}, args ...interface{}) {
 	}
 
 	err = c.call(&CallInfo{
-		f:    f,
-		args: args,
-		cb:   cb,
+		fInfo: f,
+		args:  args,
+		cb:    cb,
 	}, false)
 	if err != nil && cbFunc != nil {
 		cbFunc(&RetInfo{Ret: nil, Err: err})
@@ -369,7 +381,7 @@ func (c *Client) asynCall(id interface{}, args []interface{}, cb interface{}, n 
 	}
 
 	err = c.call(&CallInfo{
-		f:       f,
+		fInfo:   f,
 		args:    args,
 		chanRet: c.ChanAsynRet,
 		cb:      cb,
