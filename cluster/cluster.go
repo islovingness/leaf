@@ -10,6 +10,7 @@ import (
 	"github.com/name5566/leaf/conf"
 	"github.com/name5566/leaf/network"
 	"github.com/name5566/leaf/chanrpc"
+	lgob "github.com/name5566/leaf/network/gob"
 	"sync"
 	"sync/atomic"
 )
@@ -152,8 +153,6 @@ func removeAgent(serverName string) {
 
 func Destroy() {
 	closing = true
-	closeSig <- true
-
 	waitRequestTimes := 0
 	for {
 		time.Sleep(time.Second)
@@ -172,6 +171,9 @@ func Destroy() {
 		}
 	}
 
+	closeSig <- true
+	wg.Wait()
+
 	if server != nil {
 		server.Close()
 	}
@@ -181,8 +183,6 @@ func Destroy() {
 		client.Close()
 	}
 	clientsMutex.Unlock()
-
-	wg.Wait()
 }
 
 type Agent struct {
@@ -191,15 +191,22 @@ type Agent struct {
 	userData           interface{}
 	heartBeatWaitTimes int32
 
+	encMutex sync.Mutex
+	encoder  *lgob.Encoder
+	decoder  *lgob.Decoder
+
 	sync.Mutex
-	requestID    uint32
-	requestMap   map[uint32]*RequestInfo
+	requestID  uint32
+	requestMap map[uint32]*RequestInfo
 }
 
 func newAgent(conn *network.TCPConn) network.Agent {
 	a := new(Agent)
 	a.conn = conn
 	a.requestMap = make(map[uint32]*RequestInfo)
+
+	a.encoder = lgob.NewEncoder()
+	a.decoder = lgob.NewDecoder()
 
 	msg := &S2S_NotifyServerName{ServerName: conf.ServerName}
 	a.WriteMsg(msg)
@@ -255,7 +262,7 @@ func (a *Agent) Run() {
 		}
 
 		if Processor != nil {
-			msg, err := Processor.Unmarshal(data)
+			msg, err := Processor.Unmarshal(a.decoder, data)
 			if err != nil {
 				log.Debug("unmarshal message error: %v", err)
 				break
@@ -276,7 +283,9 @@ func (a *Agent) OnClose() {
 
 func (a *Agent) WriteMsg(msg interface{}) {
 	if Processor != nil {
-		data, err := Processor.Marshal(msg)
+		a.encMutex.Lock()
+		data, err := Processor.Marshal(a.encoder, msg)
+		a.encMutex.Unlock()
 		if err != nil {
 			log.Error("marshal message %v error: %v", reflect.TypeOf(msg), err)
 			return

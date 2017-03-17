@@ -11,8 +11,6 @@ import (
 )
 
 type Processor struct {
-	encoders chan *Encoder
-	decoders chan *Decoder
 	msgInfo  map[string]*MsgInfo
 }
 
@@ -25,9 +23,21 @@ type Encoder struct {
 	coder  *gob.Encoder
 }
 
+func NewEncoder() *Encoder {
+	buff := &Buffer{}
+	coder := gob.NewEncoder(buff)
+	return &Encoder{buff, coder}
+}
+
 type Decoder struct {
 	buffer *Buffer
 	coder  *gob.Decoder
+}
+
+func NewDecoder() *Decoder {
+	buff := &Buffer{}
+	coder := gob.NewDecoder(buff)
+	return &Decoder{buff, coder}
 }
 
 type MsgInfo struct {
@@ -44,42 +54,10 @@ type MsgRaw struct {
 	msgRawData []byte
 }
 
-func NewProcessor(coderPoolSize int) *Processor {
+func NewProcessor() *Processor {
 	p := new(Processor)
-	p.encoders = make(chan *Encoder, coderPoolSize)
-	p.decoders = make(chan *Decoder, coderPoolSize)
-	for i := 0; i < coderPoolSize; i++ {
-		encoderBuff := &Buffer{}
-		encoder := gob.NewEncoder(encoderBuff)
-		p.encoders <- &Encoder{encoderBuff, encoder}
-
-		decoderBuff := &Buffer{}
-		decoder := gob.NewDecoder(decoderBuff)
-		p.decoders <- &Decoder{decoderBuff, decoder}
-	}
-
 	p.msgInfo = make(map[string]*MsgInfo)
 	return p
-}
-
-func (p *Processor) popEncoder() *Encoder {
-	coder := <-p.encoders
-	coder.buffer.Buffer = &bytes.Buffer{}
-	return coder
-}
-
-func (p *Processor) pushEncoder(coder *Encoder) {
-	p.encoders <- coder
-}
-
-func (p *Processor) popDecoder(data []byte) *Decoder {
-	coder := <-p.decoders
-	coder.buffer.Buffer = bytes.NewBuffer(data)
-	return coder
-}
-
-func (p *Processor) pushDecoder(coder *Decoder) {
-	p.decoders <- coder
 }
 
 // It's dangerous to call the method on routing or marshaling (unmarshaling)
@@ -99,11 +77,6 @@ func (p *Processor) Register(msg interface{}) string {
 	i := new(MsgInfo)
 	i.msgType = msgType
 	p.msgInfo[msgID] = i
-
-	for i := 0; i < len(p.decoders); i++ {
-		data, _ := p.Marshal(msg)
-		p.Unmarshal(data[0])
-	}
 	return msgID
 }
 
@@ -188,11 +161,9 @@ func (p *Processor) Route(msg interface{}, userData interface{}) error {
 }
 
 // goroutine safe
-func (p *Processor) Unmarshal(data []byte) (interface{}, error) {
-	dec := p.popDecoder(data)
-	defer p.pushDecoder(dec)
-
+func (p *Processor) Unmarshal(dec *Decoder, data []byte) (interface{}, error) {
 	var msgID string
+	dec.buffer.Buffer = bytes.NewBuffer(data)
 	err := dec.coder.Decode(&msgID)
 	if err != nil {
 		return nil, err
@@ -215,7 +186,7 @@ func (p *Processor) Unmarshal(data []byte) (interface{}, error) {
 }
 
 // goroutine safe
-func (p *Processor) Marshal(msg interface{}) ([][]byte, error) {
+func (p *Processor) Marshal(enc *Encoder, msg interface{}) ([][]byte, error) {
 	msgType := reflect.TypeOf(msg)
 	if msgType == nil || msgType.Kind() != reflect.Ptr {
 		return nil, errors.New("json message pointer required")
@@ -226,9 +197,7 @@ func (p *Processor) Marshal(msg interface{}) ([][]byte, error) {
 	}
 
 	// data
-	enc := p.popEncoder()
-	defer p.pushEncoder(enc)
-
+	enc.buffer.Buffer = &bytes.Buffer{}
 	err := enc.coder.Encode(&msgID)
 	if err != nil {
 		return [][]byte{enc.buffer.Bytes()}, err

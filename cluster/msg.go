@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	Processor *lgob.Processor
+	Processor = lgob.NewProcessor()
 )
 
 const (
@@ -22,7 +22,6 @@ const (
 
 func init() {
 	gob.Register([]interface{}{})
-	Processor = lgob.NewProcessor(conf.GobCoderPoolSize)
 }
 
 type S2S_NotifyServerName struct {
