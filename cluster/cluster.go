@@ -284,8 +284,9 @@ func (a *Agent) OnClose() {
 func (a *Agent) WriteMsg(msg interface{}) {
 	if Processor != nil {
 		a.encMutex.Lock()
+		defer a.encMutex.Unlock()
+
 		data, err := Processor.Marshal(a.encoder, msg)
-		a.encMutex.Unlock()
 		if err != nil {
 			log.Error("marshal message %v error: %v", reflect.TypeOf(msg), err)
 			return
