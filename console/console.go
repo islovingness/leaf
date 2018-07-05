@@ -2,12 +2,12 @@ package console
 
 import (
 	"bufio"
-	"github.com/name5566/leaf/conf"
-	"github.com/name5566/leaf/network"
+	"github.com/islovingness/leaf/conf"
+	"github.com/islovingness/leaf/network"
 	"math"
 	"strconv"
 	"strings"
-	"github.com/name5566/leaf/log"
+	"github.com/islovingness/leaf/log"
 	"os"
 )
 

@@ -1,11 +1,11 @@
 package leaf
 
 import (
-	"github.com/name5566/leaf/cluster"
-	"github.com/name5566/leaf/conf"
-	"github.com/name5566/leaf/console"
-	"github.com/name5566/leaf/log"
-	"github.com/name5566/leaf/module"
+	"github.com/islovingness/leaf/cluster"
+	"github.com/islovingness/leaf/conf"
+	"github.com/islovingness/leaf/console"
+	"github.com/islovingness/leaf/log"
+	"github.com/islovingness/leaf/module"
 	"os"
 	"os/signal"
 )

@@ -4,8 +4,8 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
-	"github.com/name5566/leaf/chanrpc"
-	"github.com/name5566/leaf/log"
+	"github.com/islovingness/leaf/chanrpc"
+	"github.com/islovingness/leaf/log"
 	"reflect"
 	"bytes"
 )

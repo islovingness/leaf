@@ -2,7 +2,7 @@ package g
 
 import (
 	"container/list"
-	"github.com/name5566/leaf/log"
+	"github.com/islovingness/leaf/log"
 	"sync"
 )
 

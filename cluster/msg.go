@@ -1,14 +1,14 @@
 package cluster
 
 import (
-	lgob "github.com/name5566/leaf/network/gob"
+	lgob "github.com/islovingness/leaf/network/gob"
 	"errors"
 	"fmt"
-	"github.com/name5566/leaf/chanrpc"
-	"github.com/name5566/leaf/log"
+	"github.com/islovingness/leaf/chanrpc"
+	"github.com/islovingness/leaf/log"
 	"sync/atomic"
 	"encoding/gob"
-	"github.com/name5566/leaf/conf"
+	"github.com/islovingness/leaf/conf"
 )
 
 var (

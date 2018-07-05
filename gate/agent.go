@@ -2,8 +2,8 @@ package gate
 
 import (
 	"net"
-	"github.com/name5566/leaf/module"
-	"github.com/name5566/leaf/chanrpc"
+	"github.com/islovingness/leaf/module"
+	"github.com/islovingness/leaf/chanrpc"
 )
 
 type Agent interface {

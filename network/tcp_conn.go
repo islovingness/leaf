@@ -1,7 +1,7 @@
 package network
 
 import (
-	"github.com/name5566/leaf/log"
+	"github.com/islovingness/leaf/log"
 	"net"
 	"sync"
 )
